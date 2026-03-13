@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // Get the body
+  // Get the body as raw string, NOT json
   const payload = await req.json();
   const body = JSON.stringify(payload);
 
@@ -45,10 +45,13 @@ export async function POST(req: Request) {
     }) as WebhookEvent;
   } catch (err) {
     console.error("Error verifying webhook:", err);
-    return new Response("Error occured", {
+    return new Response("Error occurred during verification", {
       status: 400,
     });
   }
+
+  // Print raw debugging (optional, useful for Clerk logs)
+  console.log("Verified Webhook Event Type:", evt.type);
 
   // Get the ID and type
   const { id } = evt.data;
@@ -57,20 +60,32 @@ export async function POST(req: Request) {
   await dbConnect();
 
   if (eventType === "user.created" || eventType === "user.updated") {
-    const { id, first_name, last_name, image_url, email_addresses } = evt.data;
-    const email = email_addresses[0].email_address;
+    // Correct type casting for Clerk webhook data
+    const { id, first_name, last_name, image_url, email_addresses } =
+      evt.data as any;
+    const email = email_addresses?.[0]?.email_address;
 
-    await User.findOneAndUpdate(
-      { clerkId: id },
-      {
-        clerkId: id,
-        email,
-        firstName: first_name,
-        lastName: last_name,
-        imageUrl: image_url,
-      },
-      { upsert: true, new: true },
-    );
+    if (!email) {
+      return new Response("No email address provided", { status: 400 });
+    }
+
+    try {
+      await User.findOneAndUpdate(
+        { clerkId: id },
+        {
+          clerkId: id,
+          email,
+          firstName: first_name || "",
+          lastName: last_name || "",
+          imageUrl: image_url || "",
+        },
+        { upsert: true, new: true },
+      );
+      console.log(`User ${id} synced successfully`);
+    } catch (dbError) {
+      console.error("Database error during webhook:", dbError);
+      return new Response("Database error", { status: 500 });
+    }
   }
 
   if (eventType === "user.deleted") {
